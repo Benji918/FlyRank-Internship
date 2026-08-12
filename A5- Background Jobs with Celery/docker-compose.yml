@@ -1,0 +1,98 @@
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tasks
+      POSTGRES_USER: todo
+      POSTGRES_PASSWORD: todo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5436:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo -d tasks"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Message Broker (for Celery)
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  # FastAPI Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - /tmp:/tmp
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql://todo:todo@db:5432/tasks
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+  # Celery Worker (processes background jobs)
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+      - redis
+      - app
+    env_file:
+      - .env
+    volumes:
+      - ./:/app
+      - /tmp:/tmp
+    command: celery -A celery_app worker --loglevel=info
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DATABASE_URL: postgresql://todo:todo@db:5432/tasks
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+  # Flower (Celery monitoring dashboard)
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - celery-worker
+      - redis
+    ports:
+      - "5555:5555"
+    command: celery -A celery_app flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+
+volumes:
+  postgres_data:
+  redis_data:
