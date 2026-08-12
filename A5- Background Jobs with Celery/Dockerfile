@@ -1,15 +1,15 @@
 FROM python:3.12-slim
 
+# Copy the official uv binary directly into your image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 WORKDIR /app
 
-# Install system dependencies (for PDF processing)
-# RUN apt-get update && apt-get install -y \
-#     libpq-dev \
-#     gcc \
-    # && rm -rf /var/lib/apt/lists/*
-
+# Copy requirements first for better caching
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+
+# Install dependencies with uv system-wide
+RUN uv pip install --system --no-cache-dir -r requirements.txt
 
 COPY . .
 
